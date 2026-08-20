@@ -1,0 +1,13 @@
+# environments & caches
+.venv/
+__pycache__/
+*.pyc
+
+# model weights (downloaded on first run)
+*.pt
+*.onnx
+models/
+
+# runtime artifacts
+nohup.out
+*.log
