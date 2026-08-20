@@ -1,0 +1,3 @@
+# Attendance tracker dependencies
+opencv-python
+ultralytics        # brings YOLO + tracking (installs torch/numpy automatically)

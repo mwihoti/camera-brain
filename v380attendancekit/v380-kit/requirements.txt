@@ -1,0 +1,5 @@
+# Core: live view + motion detection
+opencv-python
+
+# Optional: people detection (only needed if you use --detect people)
+# ultralytics
