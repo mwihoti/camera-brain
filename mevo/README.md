@@ -64,7 +64,7 @@ ls ~/Videos/camera/tracks/$(date +%F)/
 cat ~/Videos/camera/tracks/$(date +%F)/events.csv
 ```
 
-## Gotchas learned the hard way
+### Gotchas learned the hard way
 - **One SRT client at a time.** Stop any viewer before starting another. If
   connections start failing with I/O errors and the camera's TXT record says
   `streaming=true` with nothing connected, the slot is wedged: power-cycle
