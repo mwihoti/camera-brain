@@ -292,6 +292,11 @@ def main():
 
             ok, out = cv2.imencode(".jpg", canvas, [cv2.IMWRITE_JPEG_QUALITY, 80])
             if ok:
+                # shared live frame for the Telegram bot's /snap (every ~2s)
+                if now - getattr(main, "_snap_t", 0) > 2:
+                    main._snap_t = now
+                    Path("/tmp/camera_live.jpg.tmp").write_bytes(out.tobytes())
+                    os.replace("/tmp/camera_live.jpg.tmp", "/tmp/camera_live.jpg")
                 try:
                     sink.stdin.write(out.tobytes())
                     sink.stdin.flush()
