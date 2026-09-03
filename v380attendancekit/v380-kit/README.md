@@ -97,3 +97,19 @@ The tool is one file (`watch.py`) so it's easy to grow:
 These budget cameras are known for weak defaults. Change the device password,
 keep it on a guest/IoT Wi-Fi network if you can, and don't port-forward it
 directly to the public internet.
+
+## Running on the remote server (current setup)
+
+All processing runs on the server; the laptop only relays streams.
+
+```bash
+# laptop — keep this running (auto-reconnects):
+./stream_bridge.sh v380        # or mevo / both
+
+# server — supervises tracker (headless) + Telegram bot, shared CAMERA_DATA_DIR:
+./run_server.sh v380           # or mevo; extra args go to track_live.py, e.g. --zoom 2 --at 60,30
+```
+
+Tunnelled stream URLs on the server: V380 `rtsp://admin:@127.0.0.1:8554/live/ch00_0`
+(ONVIF `127.0.0.1:8899`), Mevo `tcp://127.0.0.1:9001`. Override with `--src` /
+`$CAMERA_SRC`. Data + live frame + logs live under `$CAMERA_DATA_DIR`.

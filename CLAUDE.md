@@ -1,25 +1,32 @@
 # Camera Brain — handoff for any agent (read this first)
 
 Owner: Mwihoti (danielmwihoti@gmail.com), Nairobi. Building in public.
-Repo: github.com/mwihoti/camera-brain. Laptop = camera edge; qm sandbox =
-server side (Telegram bot, dashboard dev). Cameras are on the laptop's LAN
-and are NOT reachable from the sandbox.
+Repo: github.com/mwihoti/camera-brain.
 
-## What exists (all in v380attendancekit/v380-kit/)
-- track_live.py   THE camera brain: YOLO11n+ByteTrack boxes every object
-                  (IDs, moving/stagnant), saves full-res crops of new
-                  people/vehicles, NVIDIA VLM narrates the environment in a
-                  band — prompt is GROUNDED by YOLO's detections (stops
-                  hallucination). --camera mevo|v380, --zoom N --at X,Y.
-                  Writes /tmp/camera_live.jpg for the Telegram /snap.
-- live_detect.py  VLM caption viewer (room = 2-frame activity analysis).
-- traffic_watch.py / attendance_watch.py / agent_watch.py / record.sh / ptz.py
-- telegram_watch.py  alerts + /snap /report /status. Server mode via
-                  CAMERA_DATA_DIR; sync_to_server.sh rsyncs laptop→sandbox.
-- Models: nemotron-nano-12b-v2-vl (works) → cosmos-reason2-8b (404 until
-  the NVIDIA account activates it) → claude haiku CLI (last resort).
-  NVIDIA key + Telegram token live in ~/.config/camera-agent.env (never
-  in the repo).
+DECISION (2026-09-03): ALL camera processing now runs on the remote server
+(the qm sandbox), not the laptop. The laptop's only job is to get the camera
+streams to the server (relay/tunnel — see "Server-side run" below). Cameras
+sit on the laptop's LAN and are NOT directly reachable from the server, so
+every pipeline must consume a stream URL that the laptop pushes/tunnels.
+
+## Server-side run (how it works now)
+- Server: 32-core CPU, no GPU, 251 GB RAM. YOLO11n on CPU is fine. sshd runs
+  here and the laptop already has the ssh alias `qm-camera-brain`, so the
+  bridge is ssh -R reverse tunnels — no inbound ports anywhere.
+- Laptop (only job):  v380-kit/stream_bridge.sh v380|mevo|both
+    v380: ssh -R 8554->cam:554 (RTSP, TCP-interleaved) + 8899->cam:8899 (ONVIF)
+    mevo: SRT is UDP (ssh can't forward it) -> local ffmpeg pulls SRT, serves
+          MPEG-TS on tcp://127.0.0.1:9001?listen, ssh -R 9001 exposes it.
+- Server:  v380-kit/run_server.sh v380|mevo [track_live args]
+    supervises track_live.py --headless --src <tunnel URL> + telegram_watch.py;
+    both share CAMERA_DATA_DIR (/root/camera-data) so sync_to_server.sh and
+    rsync are no longer needed. Logs in $CAMERA_DATA_DIR/logs/.
+- track_live.py now: --src URL override (or $CAMERA_SRC), --headless (no
+  ffplay), day folder rolls over at midnight, reads all keys from
+  ~/.config/camera-agent.env. Server env has CAMERA_DATA_DIR and
+  TELEGRAM_BOT_TOKEN; NVIDIA_API_KEY still needs adding on the server.
+- ptz.py / ONVIF reboot: point at 127.0.0.1:8899 when run from the server.
+- python deps on server: /opt/agent-venv (opencv-python-headless, ultralytics).
 
 ## Cameras
 - V380 bulb cam: RTSP unlocked via ceshi.ini on SD card; ONVIF PTZ on 8899;

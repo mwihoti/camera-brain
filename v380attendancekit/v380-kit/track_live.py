@@ -11,11 +11,14 @@ Two layers on one live window:
 Usage:
     track_live.py --camera mevo [--zoom 2 --at 60,30]
     track_live.py --camera v380
+    track_live.py --camera v380 --src rtsp://admin:@127.0.0.1:8554/live/ch00_0 --headless
+        (server: stream arrives through the laptop's ssh tunnel, no window)
 Quit: q in the window / Ctrl-C.
 
-Outputs:
-    ~/Videos/camera/tracks/YYYY-MM-DD/events.csv        one row per new object
-    ~/Videos/camera/tracks/YYYY-MM-DD/id<N>_<cls>.jpg   full-res first crop
+Outputs (root = $CAMERA_DATA_DIR if set, else ~/Videos/camera):
+    <root>/tracks/YYYY-MM-DD/events.csv        one row per new object
+    <root>/tracks/YYYY-MM-DD/id<N>_<cls>.jpg   full-res first crop
+    <root>/camera_live.jpg (or /tmp/camera_live.jpg)   live frame for Telegram /snap
 """
 
 import argparse
@@ -40,6 +43,10 @@ ap = argparse.ArgumentParser()
 ap.add_argument("--camera", choices=["v380", "mevo"], default="mevo")
 ap.add_argument("--zoom", type=float, default=1.0, help="digital zoom factor")
 ap.add_argument("--at", default="50,50", help="zoom center as X,Y percent")
+ap.add_argument("--src", default=os.environ.get("CAMERA_SRC"),
+                help="override stream URL (e.g. tunnelled rtsp://127.0.0.1:8554/... or tcp://127.0.0.1:9001)")
+ap.add_argument("--headless", action="store_true",
+                help="no ffplay window (server mode); live frame still written for Telegram")
 args = ap.parse_args()
 ZOOM = max(1.0, args.zoom)
 CX_PCT, CY_PCT = (float(v) for v in args.at.split(","))
@@ -54,8 +61,27 @@ else:
     W, H = 1280, 720
     VFILTER = "hflip,vflip,fps=2"
     DISP_W, DISP_H = 1280, 720
+if args.src:
+    SRC = args.src
 
-OUT = Path.home() / "Videos" / "camera" / "tracks" / f"{datetime.now():%Y-%m-%d}"
+# Data root: CAMERA_DATA_DIR (server mode, shared with telegram_watch.py) or the
+# laptop default. Day folder is resolved per write so a long-running process
+# rolls over at midnight instead of writing 30 days into one folder.
+_envfile = Path.home() / ".config" / "camera-agent.env"
+if _envfile.exists():
+    for line in _envfile.read_text().splitlines():
+        if "=" in line and not line.lstrip().startswith("#"):
+            k, v = line.split("=", 1)
+            if v.strip():
+                os.environ.setdefault(k.strip(), v.strip())
+_DATA = os.environ.get("CAMERA_DATA_DIR", "")
+DATA_ROOT = Path(_DATA) if _DATA else Path.home() / "Videos" / "camera"
+LIVE_FRAME = (Path(_DATA) / "camera_live.jpg") if _DATA else Path("/tmp/camera_live.jpg")
+
+def out_dir() -> Path:
+    d = DATA_ROOT / "tracks" / f"{datetime.now():%Y-%m-%d}"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
 CROP_CLASSES = {0: "person", 1: "bicycle", 2: "car", 3: "motorcycle", 5: "bus", 7: "truck"}
 CONF = 0.35
 MOVE_PX = 25
@@ -64,11 +90,6 @@ CROP_MIN_AGE = 3
 BAND_H = 118
 BRAIN_SEC = 1           # near-continuous: next analysis starts right after the last
 
-_envfile = Path.home() / ".config" / "camera-agent.env"
-if "NVIDIA_API_KEY" not in os.environ and _envfile.exists():
-    for line in _envfile.read_text().splitlines():
-        if line.startswith("NVIDIA_API_KEY=") and len(line.split("=", 1)[1]) > 5:
-            os.environ["NVIDIA_API_KEY"] = line.split("=", 1)[1].strip()
 NVIDIA_API_KEY = os.environ.get("NVIDIA_API_KEY", "")
 NVIDIA_MODELS = ["nvidia/nemotron-nano-12b-v2-vl", "nvidia/cosmos-reason2-8b"]
 NVIDIA_URL = "https://integrate.api.nvidia.com/v1/chat/completions"
@@ -164,16 +185,18 @@ def brain_thread():
 
 
 def start_source():
+    # RTSP over the ssh tunnel must be TCP-interleaved (ssh can't forward UDP).
+    extra = ["-rtsp_transport", "tcp"] if SRC.startswith("rtsp://") else []
     return subprocess.Popen(
         ["ffmpeg", "-nostdin", "-loglevel", "error",
          "-fflags", "nobuffer", "-flags", "low_delay", "-analyzeduration", "0",
-         "-probesize", "500000", "-i", SRC,
+         "-probesize", "500000", *extra, "-i", SRC,
          "-vf", VFILTER, "-f", "rawvideo", "-pix_fmt", "bgr24", "pipe:1"],
         stdout=subprocess.PIPE)
 
 
 def events_csv():
-    p = OUT / "events.csv"
+    p = out_dir() / "events.csv"
     if not p.exists():
         with p.open("w", newline="") as f:
             csv.writer(f).writerow(["time", "id", "class", "crop"])
@@ -181,14 +204,15 @@ def events_csv():
 
 
 def main():
-    OUT.mkdir(parents=True, exist_ok=True)
+    out_dir()
     log("loading YOLO11n...")
     model = YOLO("yolo11n.pt")
-    log(f"camera brain on {args.camera}: all-object tracking + environment narration")
+    log(f"camera brain on {args.camera} ({SRC.split('?')[0]}): all-object tracking + environment narration")
+    log(f"data root {DATA_ROOT}, live frame {LIVE_FRAME}" + (" [headless]" if args.headless else ""))
     threading.Thread(target=brain_thread, daemon=True).start()
 
     src = start_source()
-    sink = subprocess.Popen(
+    sink = None if args.headless else subprocess.Popen(
         ["ffplay", "-loglevel", "error", "-fflags", "nobuffer",
          "-window_title", f"{args.camera} camera brain", "-f", "mjpeg", "-i", "-"],
         stdin=subprocess.PIPE)
@@ -197,7 +221,7 @@ def main():
     nbytes = W * H * 3
 
     try:
-        while sink.poll() is None:
+        while sink is None or sink.poll() is None:
             buf = src.stdout.read(nbytes)
             if not buf or len(buf) < nbytes:
                 log("stream ended; reconnecting in 5s")
@@ -247,7 +271,7 @@ def main():
                         saved.add(tid)
                         pad = int((x2 - x1) * 0.15)
                         crop = frame[max(0, y1 - pad):y2 + pad, max(0, x1 - pad):x2 + pad]
-                        cpath = OUT / f"id{tid}_{name}.jpg"
+                        cpath = out_dir() / f"id{tid}_{name}.jpg"
                         cv2.imwrite(str(cpath), crop, [cv2.IMWRITE_JPEG_QUALITY, 95])
                         with events_csv().open("a", newline="") as f:
                             csv.writer(f).writerow(
@@ -295,18 +319,21 @@ def main():
                 # shared live frame for the Telegram bot's /snap (every ~2s)
                 if now - getattr(main, "_snap_t", 0) > 2:
                     main._snap_t = now
-                    Path("/tmp/camera_live.jpg.tmp").write_bytes(out.tobytes())
-                    os.replace("/tmp/camera_live.jpg.tmp", "/tmp/camera_live.jpg")
-                try:
-                    sink.stdin.write(out.tobytes())
-                    sink.stdin.flush()
-                except BrokenPipeError:
-                    break
+                    tmp_live = LIVE_FRAME.with_suffix(".jpg.tmp")
+                    tmp_live.write_bytes(out.tobytes())
+                    os.replace(tmp_live, LIVE_FRAME)
+                if sink is not None:
+                    try:
+                        sink.stdin.write(out.tobytes())
+                        sink.stdin.flush()
+                    except BrokenPipeError:
+                        break
     except KeyboardInterrupt:
         pass
     finally:
         src.kill()
-        sink.kill()
+        if sink is not None:
+            sink.kill()
 
 
 if __name__ == "__main__":

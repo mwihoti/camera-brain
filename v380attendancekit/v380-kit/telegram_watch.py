@@ -44,8 +44,8 @@ TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 API = f"https://api.telegram.org/bot{TOKEN}"
 
-# Server mode: set CAMERA_DATA_DIR to a dir kept fresh by sync_to_server.sh
-# (laptop rsyncs tracker data there). Default = local laptop paths.
+# Server mode: CAMERA_DATA_DIR is the dir track_live.py writes to on the same
+# server (run_server.sh sets it). Default = local laptop paths.
 _DATA = os.environ.get("CAMERA_DATA_DIR", "")
 if _DATA:
     TRACKS = Path(_DATA) / "tracks"
