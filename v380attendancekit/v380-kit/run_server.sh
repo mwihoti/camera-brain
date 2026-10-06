@@ -17,11 +17,12 @@ PY=${PYTHON:-python3}
 CAM=${1:-v380}; shift || true
 
 case "$CAM" in
-  v380) SRC=${CAMERA_SRC:-rtsp://admin:@127.0.0.1:8554/live/ch00_0} ;;
+  v380) SRC=${CAMERA_SRC:-rtsp://admin:@127.0.0.1:18554/live/ch00_0} ;;
   mevo) SRC=${CAMERA_SRC:-tcp://127.0.0.1:9001} ;;
   *) echo "usage: $0 v380|mevo [track_live.py args]"; exit 1 ;;
 esac
 
+export CAMERA_SRC=$SRC   # telegram_watch /clip records from this URL
 mkdir -p "$CAMERA_DATA_DIR/logs"
 log() { printf '%s server: %s\n' "$(date +%H:%M:%S)" "$*"; }
 
